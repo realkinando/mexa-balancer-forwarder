@@ -64,6 +64,7 @@ contract BalancerForwarder is DSAuthority, EIP712(42) {
         DSAuth auth = DSAuth(to);
         require(auth.owner() == signer, "Auth Failed");
 
+        // This saves memory in the contract and avoids the stack getting too deep
         MetaTransaction memory mtx = MetaTransaction(signer,to,data,value,inputToken,outputToken,nonces[signer]);
 
         bytes32 digest = keccak256(

@@ -7,10 +7,13 @@ import "./EIP712.sol";
 contract MexaDSProxyFactory is DSProxyFactory, EIP712(42) {
     //42 = KOVAN
 
+    //all factory specific meta tx variables are declared here
     bytes32 internal constant META_TRANSACTION_TYPEHASH = 
     keccak256(bytes("MetaTransaction(address holder,address authority,uint256 nonce)"));
     mapping(address => uint256) public nonces;
 
+
+    //Re written build method sets the authority before transferring ownership to the user's EOA
     function metaBuild(address holder,address authority, Signature calldata signature) external returns (address payable proxy){
 
         bytes32 digest = keccak256(
@@ -38,7 +41,7 @@ contract MexaDSProxyFactory is DSProxyFactory, EIP712(42) {
         DSProxy(proxy).setAuthority(DSAuthority(authority));
         DSProxy(proxy).setOwner(holder);
         isProxy[proxy] = true;
-
+        nonces[holder]++;
     }
 
 }
