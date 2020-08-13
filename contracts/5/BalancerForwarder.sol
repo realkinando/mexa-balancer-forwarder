@@ -1,20 +1,46 @@
-pragma solidity ^0.6.8;
+pragma solidity 0.5.12;
 pragma experimental ABIEncoderV2;
 
 import "./EIP712.sol";
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "../5/dsProxy.sol";
+//import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "./dsProxy.sol";
 
-contract BalancerForwarder is DSAuthority, EIP712 {
-    bytes32 executeSig = bytes32(bytes4(keccak256("execute(address,bytes)")));
+interface IERC20 {
+    function totalSupply() external view returns (uint256);
+    function balanceOf(address account) external view returns (uint256);
+    function transfer(address recipient, uint256 amount) external returns (bool);
+    function allowance(address owner, address spender) external view returns (uint256);
+    function approve(address spender, uint256 amount) external returns (bool);
+    function transferFrom(address sender, address recipient, uint256 amount) external returns (bool);
+    event Transfer(address indexed from, address indexed to, uint256 value);
+    event Approval(address indexed owner, address indexed spender, uint256 value);
+}
 
-    struct Signature {
-        bytes32 r;
-        bytes32 s;
-        uint8 v;
+contract BalancerForwarder is DSAuthority, EIP712(42) {
+    //42 = KOVAN
+    
+    //all forwarder specific meta tx variables are declared here
+    //meta Tx typehash and struct now cover all possible variables
+    //Biconomy's balancer integration will now be fully trustless
+    mapping(address => uint256) public nonces;
+
+    bytes32 internal constant META_TRANSACTION_TYPEHASH = 
+    keccak256(bytes("MetaTransaction(address signer,address to,bytes data,uint256 value,address inputToken,address outputToken,uint256 nonce)"));
+
+    struct MetaTransaction {
+        address signer;
+        address to;
+        bytes data;
+        uint256 value;
+        address inputToken;
+        address outputToken;
+        uint256 nonce;
     }
 
+    bytes32 executeSig = bytes32(bytes4(keccak256("execute(address,bytes)")));
+
     //mapping(address => mapping(address => mapping(bytes4 => bool))) acl;
+    //The above mapping has been omitted as it isn't used
 
     function canCall(
         address src,
@@ -38,6 +64,8 @@ contract BalancerForwarder is DSAuthority, EIP712 {
         DSAuth auth = DSAuth(to);
         require(auth.owner() == signer, "Auth Failed");
 
+        MetaTransaction memory mtx = MetaTransaction(signer,to,data,value,inputToken,outputToken,nonces[signer]);
+
         bytes32 digest = keccak256(
             abi.encodePacked(
                 "\x19\x01",
@@ -45,8 +73,13 @@ contract BalancerForwarder is DSAuthority, EIP712 {
                 keccak256(
                     abi.encode(
                         META_TRANSACTION_TYPEHASH,
-                        signer,
-                        nonces[signer]
+                        mtx.signer,
+                        mtx.to,
+                        mtx.data,
+                        mtx.value,
+                        mtx.inputToken,
+                        mtx.outputToken,
+                        mtx.nonce
                     )
                 )
             )
