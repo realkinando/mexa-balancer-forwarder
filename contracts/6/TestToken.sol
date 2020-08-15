@@ -1,6 +1,8 @@
 pragma solidity ^0.6.8;
 
-import "@openzepellin/contracts/token/ERC20/ERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+
+// Mocks BPool by receiving tokenA in and minting tokenB 1:1
 
 contract TestToken is ERC20{
     ERC20 internal WETH;
@@ -9,7 +11,7 @@ contract TestToken is ERC20{
         WETH = ERC20(_WETH);
     }
 
-    function mint(uint256 amount){
+    function mint(uint256 amount) public{
         WETH.transferFrom(msg.sender,address(this),amount);
         _mint(msg.sender,amount);
     }

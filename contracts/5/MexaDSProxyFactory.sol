@@ -4,7 +4,7 @@ pragma experimental ABIEncoderV2;
 import "./dsProxy.sol";
 import "./EIP712.sol";
 
-contract MexaDSProxyFactory is DSProxyFactory, EIP712(42) {
+contract MexaDSProxyFactory is DSProxyFactory, EIP712("MexaDSProxyFactory","1",42) {
     //42 = KOVAN
 
     //all factory specific meta tx variables are declared here
@@ -36,12 +36,36 @@ contract MexaDSProxyFactory is DSProxyFactory, EIP712(42) {
             "invalid-signatures"
         );
 
+        nonces[holder]++;
+
+        proxy = _authorityBuild(holder,authority);
+
+    }
+
+    // For when we're creating a proxy for a non EIP712 compliant wallet
+    function metaBuildWithBasicSign(address holder, address authority, Signature calldata signature) 
+    external returns (address payable proxy){
+
+        bytes32 hash = prefixed(keccak256(abi.encodePacked(nonces[holder], this, chainId, msg.sig, authority)));
+        address signer = ecrecover(hash, signature.v, signature.r, signature.s);
+        require(signer != address(0), "invalid-address-0");
+        require(signer == holder, "Invalid signature");
+
+        nonces[holder]++;
+
+        proxy = _authorityBuild(holder,authority);
+    }
+
+    function prefixed(bytes32 hash) internal pure returns (bytes32) {
+        return keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", hash));
+    }
+
+    function _authorityBuild(address holder, address authority) internal returns (address payable proxy){
         proxy = address(new DSProxy(address(cache)));
         emit Created(msg.sender, holder, address(proxy), address(cache));
         DSProxy(proxy).setAuthority(DSAuthority(authority));
         DSProxy(proxy).setOwner(holder);
         isProxy[proxy] = true;
-        nonces[holder]++;
     }
 
 }

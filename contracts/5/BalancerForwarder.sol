@@ -16,7 +16,7 @@ interface IERC20 {
     event Approval(address indexed owner, address indexed spender, uint256 value);
 }
 
-contract BalancerForwarder is DSAuthority, EIP712(42) {
+contract BalancerForwarder is DSAuthority, EIP712("BalancerForwarder","1",42) {
     //42 = KOVAN
     
     //all forwarder specific meta tx variables are declared here
