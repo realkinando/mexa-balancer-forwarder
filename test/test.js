@@ -1,7 +1,4 @@
 const { expect } = require("chai");
-const { networks } = require("../buidler.config");
-const ethUtil = require('ethereumjs-util');
-const sigUtil = require('eth-sig-util');
 
 let domainType = [
   { name: "name", type: "string" },
@@ -30,14 +27,13 @@ let metaBuildBasicSignature = ethers.utils.id("metaBuildWithBasicSign(address,ad
 
 let mexaDSProxyFactory;
 let balancerForwarder;
+let mockActions;
 let account0;
 let account1;
 let account2;
-
-// Test 2
-
-
-// Test 3
+let proxy0;
+let WETH;
+let testToken;
 
 describe("Biconomy x Balancer Contracts", function() {
 
@@ -45,17 +41,17 @@ describe("Biconomy x Balancer Contracts", function() {
 
     // Deploy WETH
     const _WETH9 = await ethers.getContractFactory("WETH9");
-    const WETH = await _WETH9.deploy();
+    WETH = await _WETH9.deploy();
     await WETH.deployed();
 
     // Deploy TestToken
     const TestToken = await ethers.getContractFactory("TestToken");
-    const testToken = await TestToken.deploy(WETH.address);
+    testToken = await TestToken.deploy(WETH.address);
     await testToken.deployed();
 
     // Deploy MockActions
     const MockActions = await ethers.getContractFactory("MockActions");
-    const mockActions = await MockActions.deploy(WETH.address,testToken.address);
+    mockActions = await MockActions.deploy(WETH.address,testToken.address);
     await mockActions.deployed();
 
     // Deploy BalancerForwarder
@@ -86,7 +82,7 @@ describe("Biconomy x Balancer Contracts", function() {
       verifyingContract : mexaDSProxyFactory.address
     };
 
-    const dataToSign = {
+    const dataToSign0 = {
       types: {
           EIP712Domain: domainType,
           MetaTransaction: metaBuildType
@@ -101,7 +97,7 @@ describe("Biconomy x Balancer Contracts", function() {
       };
 
     // - sign metaTx for MetaBuild(account1,BalancerForwarder)
-    const metaBuildSig0 = await ethers.provider.send("eth_signTypedData",[await account1.getAddress(),dataToSign]);
+    const metaBuildSig0 = await ethers.provider.send("eth_signTypedData",[await account1.getAddress(),dataToSign0]);
     const signature = metaBuildSig0.substring(2);
     const _r = "0x" + signature.substring(0, 64);
     const _s = "0x" + signature.substring(64, 128);
@@ -109,31 +105,129 @@ describe("Biconomy x Balancer Contracts", function() {
 
     // - transmit it using account0
     const proxy0Deployment = await mexaDSProxyFactory.metaBuild(await account1.getAddress(), balancerForwarder.address, {v:_v,r:_r,s:_s});
-    const proxy0CreatedEvent = await mexaDSProxyFactory.queryFilter(mexaDSProxyFactory.filters.Created(null,await account1.getAddress(),null,null),proxy0Deployment.blockHash);
-    // expect(await proxy0.owner()).to.equal(await account1.getAddress());
+    
+    // gets the "Created" event made in the previous Tx where account1 is the owner. Uses this data to generate DSProxy object
+    const proxy0Event = await mexaDSProxyFactory.queryFilter(
+      mexaDSProxyFactory.filters.Created(null,await account1.getAddress(),null,null),
+      proxy0Deployment.blockHash
+      );
+    const [proxy0Sender,proxy0Owner,proxy0Address,proxy0Cache] = proxy0Event[0].args
+    proxy0 = await ethers.getContractAt("DSProxy",proxy0Address);
+
     // - check owner + authority are correct
+    expect(await proxy0.owner()).to.equal(await account1.getAddress());
+    expect(await proxy0.authority()).to.equal(balancerForwarder.address);
+    
     // - sign metaTx for MetaBuild(account1,BalancerForwarder) INCORRECTLY (same nonce again)
-    // - sign metaTx for MetaBuild(account1,BalancerForwarder) INCORRECTLY (account0 signature)
-    // - check second and third attempts fail
+    let wrongNonceFails = false;
+    try{
+      await mexaDSProxyFactory.metaBuild(await account1.getAddress(), balancerForwarder.address, {v:_v,r:_r,s:_s});
+    }
+    catch(error){
+      wrongNonceFails = true;
+    }
+    expect(wrongNonceFails).to.equal(true);
+
+    // - sign with wrong signer
+    let wrongAccSignFails = false;
+    try{
+      const metaBuildSig1 = await ethers.provider.send("eth_signTypedData",[await account2.getAddress(),dataToSign]);
+      const signature1 = metaBuildSig1.substring(2);
+      const _r1 = "0x" + signature1.substring(0, 64);
+      const _s1 = "0x" + signature1.substring(64, 128);
+      const _v1 = parseInt(signature1.substring(128, 130), 16);
+      await mexaDSProxyFactory.metaBuild(await account1.getAddress(), balancerForwarder.address, {v:_v1,r:_r1,s:_s1});
+    }
+    catch(error){
+      wrongAccSignFails = true;
+    }
+    expect(wrongAccSignFails).to.equal(true);
   });
 
-  it("MetaBuildWithBasicSign", async function(){
-    // - sign metaTx for MetaBuildWithBasicSign(account1,BalancerForwarder)
+  /** it("MetaBuildWithBasicSign", async function(){
+
+     // - sign metaTx for MetaBuildWithBasicSign(account1,BalancerForwarder) "\x19Ethereum Signed Message:\n32"
+    const dataToSign1 = ethers.utils.solidityKeccak256(["string","bytes32"],[
+      "\x19Ethereum Signed Message:\n32",
+      ethers.utils.solidityKeccak256(
+        ["uint256","address","uint256","bytes4","address"],
+        [0,mexaDSProxyFactory.address,42,metaBuildBasicSignature,balancerForwarder.address]
+      )]);
+      
+    const metaBuildSig2 = await ethers.provider.send("eth_sign",[await account2.getAddress(),dataToSign1]);
+    const signature2 = metaBuildSig2.substring(2);
+    const _r2 = "0x" + signature2.substring(0, 64);
+    const _s2 = "0x" + signature2.substring(64, 128);
+    const _v2 = parseInt(signature2.substring(128, 130), 16);
+
     // - transmit it using account0
+    const proxy1Deployment = await mexaDSProxyFactory.metaBuildWithBasicSign(
+      await account2.getAddress(),balancerForwarder.address,{v:_v2,r:_r2,s:_s2});
+    
+    const proxy1Event = await mexaDSProxyFactory.queryFilter(
+      mexaDSProxyFactory.filters.Created(null,await account2.getAddress(),null,null),
+      proxy1Deployment.blockHash
+      );
+    
+    const [proxy1Sender,proxy1Owner,proxy1Address,proxy1Cache] = proxy1Event[0].args
+    const proxy1 = await ethers.getContractAt("DSProxy",proxy1Address);
+
     // - check owner + authority are correct
+    expect(await proxy1.owner()).to.equal(await account2.getAddress());
+    expect(await proxy1.authority()).to.equal(balancerForwarder.address);
+
     // - sign metaTx for MetaBuildWithBasicSign(account1,BalancerForwarder) INCORRECTLY (same nonce again)
     // - sign metaTx for MetaBuildWithBasicSign(account1,BalancerForwarder) INCORRECTLY (account0 signature)
     // - check second and third attempts fail
-  });
+  });**/
 
   it("BalancerForwarder", async function(){
     // - build call data
+    const forwarderDomainData = {
+      name:"BalancerForwarder",
+      version:"1",
+      chainId:42,
+      verifyingContract:balancerForwarder.address
+    };
+
+    const mockActionsCall = await mockActions.populateTransaction.joinPool(ethers.utils.parseEther("90"));
+    const mockActionsData = mockActionsCall.data;
+    const dsproxyExecCall = await proxy0.populateTransaction['execute(address,bytes)'](mockActions.address,mockActionsData);
+    const dsproxyExecData = dsproxyExecCall.data;
+
+    const dataToSign3 = {
+      types: {
+          EIP712Domain: domainType,
+          MetaTransaction: balancerForwarderType
+        },
+        domain: forwarderDomainData,
+        primaryType: "MetaTransaction",
+        message: {
+          signer: await account1.getAddress(),
+          to: proxy0.address,
+          data : dsproxyExecData,
+          value: ethers.utils.parseEther("90").toString(),
+          inputToken : WETH.address,
+          outputToken : testToken.address,
+          nonce: 0
+        }
+      };
+
+      const metaBuildSig3 = await ethers.provider.send("eth_signTypedData",[await account1.getAddress(),dataToSign3]);
+      const signature3 = metaBuildSig3.substring(2);
+      const _r3 = "0x" + signature3.substring(0, 64);
+      const _s3 = "0x" + signature3.substring(64, 128);
+      const _v3 = parseInt(signature3.substring(128, 130), 16);
+      await balancerForwarder.forward(await account1.getAddress(),{v:_v3,r:_r3,s:_s3},proxy0.address,dsproxyExecData,
+      ethers.utils.parseEther("90"),WETH.address,testToken.address);
+
+
     // - sign metaTx for BalancerForwarder
-// - call BalancerForwarder with metaTx data using account 0
-// - check WETH and tokenB balances are correct
-// - sign metaTx INCORRECTLY (same nonce again)
-// - sign metaTx INCORRECTLY (account0 signature)
-// - check second and third attempts fail
+    // - call BalancerForwarder with metaTx data using account 0
+    // - check WETH and tokenB balances are correct
+    // - sign metaTx INCORRECTLY (same nonce again)
+    // - sign metaTx INCORRECTLY (account0 signature)
+    // - check second and third attempts fail
   });
 
 });
